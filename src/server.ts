@@ -2,6 +2,7 @@ import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { config } from 'dotenv';
 import { SupabaseRAGSystem } from './supabase-rag-system';
 import { MastraRAGSystem } from './mastra-rag-system';
+import { CONFIG, validateEnvironment, getServerConfig, getRagConfig } from './constants';
 
 // Load environment variables
 config();
@@ -56,29 +57,18 @@ let ragSystem: SupabaseRAGSystem | null = null;
 let mastraRagSystem: MastraRAGSystem | null = null;
 
 async function initializeRAGSystem() {
-  if (!process.env.SAMBANOVA_API_KEY) {
-    throw new Error('SAMBANOVA_API_KEY environment variable is required');
-  }
-
-  if (!process.env.SUPABASE_DATABASE_URL) {
-    throw new Error('SUPABASE_DATABASE_URL environment variable is required');
-  }
-
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('SUPABASE_SERVICE_ROLE_KEY environment variable is required');
+  // Validate environment variables using constants
+  const envValidation = validateEnvironment();
+  if (!envValidation.isValid) {
+    throw new Error(`Missing required environment variables: ${envValidation.missingVars.join(', ')}`);
   }
 
   ragSystem = new SupabaseRAGSystem(
-    process.env.SAMBANOVA_API_KEY,
-    {
-      maxContextDocuments: 3,
-      similarityThreshold: 0.3,
-      embeddingDimension: 4096,
-      rateLimitDelayMs: 8000 // 8 seconds between requests
-    },
-    process.env.SUPABASE_DATABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    'financial-doc-bucket'
+    CONFIG.ENV.SAMBANOVA_API_KEY!,
+    getRagConfig(),
+    CONFIG.ENV.SUPABASE_DATABASE_URL!,
+    CONFIG.ENV.SUPABASE_SERVICE_ROLE_KEY!,
+    CONFIG.SUPABASE.BUCKET_NAME
   );
 
   await ragSystem.initialize();
@@ -86,9 +76,9 @@ async function initializeRAGSystem() {
 
   // Initialize Mastra RAG system for enhanced query processing
   mastraRagSystem = new MastraRAGSystem(
-    process.env.SAMBANOVA_API_KEY,
-    process.env.SUPABASE_DATABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    CONFIG.ENV.SAMBANOVA_API_KEY!,
+    CONFIG.ENV.SUPABASE_DATABASE_URL!,
+    CONFIG.ENV.SUPABASE_SERVICE_ROLE_KEY!
   );
 
   await mastraRagSystem.initialize();
@@ -97,13 +87,14 @@ async function initializeRAGSystem() {
 
 // Build Fastify app
 async function buildApp(): Promise<FastifyInstance> {
+  const serverConfig = getServerConfig();
   const fastify = Fastify({
     logger: {
       level: 'info'
     },
-    bodyLimit: 10485760, // 10MB for file uploads
-    keepAliveTimeout: 65000,
-    requestTimeout: 60000
+    bodyLimit: serverConfig.bodyLimit,
+    keepAliveTimeout: serverConfig.keepAliveTimeout,
+    requestTimeout: serverConfig.requestTimeout
   });
 
   // Register plugins
@@ -117,14 +108,14 @@ async function buildApp(): Promise<FastifyInstance> {
   });
 
   await fastify.register(require('@fastify/rate-limit'), {
-    max: 100,
-    timeWindow: '1 minute'
+    max: CONFIG.RATE_LIMIT.MAX_REQUESTS,
+    timeWindow: CONFIG.RATE_LIMIT.TIME_WINDOW
   });
 
   await fastify.register(require('@fastify/multipart'), {
     limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB limit
-      files: 1
+      fileSize: CONFIG.UPLOAD.MAX_FILE_SIZE,
+      files: CONFIG.UPLOAD.MAX_FILES
     }
   });
 
@@ -203,22 +194,13 @@ async function buildApp(): Promise<FastifyInstance> {
         } as ApiResponse;
       }
 
-      // Validate file type
-      const allowedTypes = [
-        'text/plain',
-        'text/markdown',
-        'text/csv',
-        'application/csv',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/octet-stream' // For files where MIME type isn't detected correctly
-      ];
+      // Validate file type using constants
+      const allowedTypes = CONFIG.UPLOAD.ALLOWED_MIME_TYPES;
 
       // Check by file extension if MIME type is generic
       const filename = data.filename || '';
       const extension = filename.toLowerCase().split('.').pop();
-      const allowedExtensions = ['txt', 'md', 'csv', 'pdf', 'doc', 'docx'];
+      const allowedExtensions = CONFIG.UPLOAD.ALLOWED_EXTENSIONS;
 
       console.log(`📁 DEBUG: File details:`, {
         filename: data.filename,
@@ -827,7 +809,7 @@ Please answer based on the provided document context. If the information is not 
 
 // Start server function
 async function startServer() {
-  const PORT = process.env.PORT || 3000;
+  const PORT = CONFIG.ENV.PORT;
   
   try {
     console.log('🚀 Starting SambaNova RAG API Server with Supabase (Fastify)...\n');
@@ -839,9 +821,10 @@ async function startServer() {
     const fastify = await buildApp();
     
     // Start listening
+    const serverConfig = getServerConfig();
     await fastify.listen({ 
-      port: Number(PORT), 
-      host: '0.0.0.0' 
+      port: serverConfig.port, 
+      host: serverConfig.host 
     });
     
     console.log(`\n🌟 SambaNova RAG API Server running on http://localhost:${PORT}`);

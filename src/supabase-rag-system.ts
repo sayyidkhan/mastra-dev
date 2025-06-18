@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
+import { CONFIG, buildSambaNovaUrl } from './constants';
 
 config();
 
@@ -60,7 +61,7 @@ export class SupabaseRAGSystem {
     config: RAGConfig,
     supabaseUrl: string,
     supabaseKey: string,
-    bucketName: string = 'financial-doc-bucket'
+    bucketName: string = CONFIG.SUPABASE.BUCKET_NAME
   ) {
     this.apiKey = apiKey;
     this.config = config;
@@ -575,11 +576,31 @@ Please provide a helpful and accurate answer based only on the information provi
    */
   async clearDocuments(): Promise<void> {
     try {
-      // Delete all from database
+      // Get all documents first to delete files from storage
+      const allDocs = await this.getAllDocuments();
+      
+      // Delete files from storage
+      if (allDocs.length > 0) {
+        const storageFiles = allDocs
+          .filter(doc => doc.storage_path)
+          .map(doc => doc.storage_path);
+          
+        if (storageFiles.length > 0) {
+          const { error: storageError } = await this.supabase.storage
+            .from(this.bucketName)
+            .remove(storageFiles);
+          
+          if (storageError) {
+            console.warn(`⚠️  Could not delete some files from storage: ${storageError.message}`);
+          }
+        }
+      }
+
+      // Delete all from database - use gt to select all rows (greater than min UUID)
       const { error } = await this.supabase
         .from('documents')
         .delete()
-        .neq('id', ''); // Delete all rows
+        .gt('id', '00000000-0000-0000-0000-000000000000');
 
       if (error) {
         throw new Error(`Failed to clear documents: ${error.message}`);
