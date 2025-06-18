@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Build output
+dist/
+
+# IDE specific files
+.vscode/
+.idea/
+
+# TypeScript cache
+*.tsbuildinfo
+
+.codeiumignore
+.cursorignore
