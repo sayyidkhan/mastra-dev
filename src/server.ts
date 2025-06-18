@@ -30,7 +30,7 @@ interface EnhancedQueryRequest {
   documentNames?: string[]; // Optional: query by document names
   tags?: string[];         // Optional: query documents with specific tags
   useAllDocuments?: boolean; // Optional: use all available documents
-  user_response?: string;  // Optional: user's response/feedback for formatting
+  userResponse?: string;  // Optional: user's response/feedback for formatting
 }
 
 interface ApiResponse<T = any> {
@@ -517,7 +517,7 @@ async function buildApp(): Promise<FastifyInstance> {
             default: false,
             description: 'Use all available documents for context'
           },
-          user_response: {
+          userResponse: {
             type: 'string',
             description: 'User response or feedback to include in the formatted response'
           }
@@ -534,7 +534,7 @@ async function buildApp(): Promise<FastifyInstance> {
         } as ApiResponse;
       }
 
-      const { prompt, documentIds, documentNames, tags, useAllDocuments, user_response } = request.body;
+      const { prompt, documentIds, documentNames, tags, useAllDocuments, userResponse } = request.body;
 
       // Step 1: Get available documents and filter based on selection criteria
       let selectedDocuments: any[] = [];
@@ -595,26 +595,21 @@ async function buildApp(): Promise<FastifyInstance> {
       let enhancedPrompt: string;
       
       if (selectedDocuments.length > 0) {
-        enhancedPrompt = `Context: You have access to ${selectedDocuments.length} selected document(s):
-${documentContext.map(doc => `- ${doc.name} (ID: ${doc.id}, Tags: ${doc.tags.join(', ')})`).join('\n')}
+        enhancedPrompt = `Document Data:
+${documentContext.map(doc => `${doc.name}:\n${doc.content}`).join('\n\n')}
 
-Available document content for reference:
-${documentContext.map(doc => `Document "${doc.name}":\n${doc.content}...`).join('\n\n')}
+Question: ${prompt}
 
-User Query: ${prompt}
+${userResponse ? `Output Format: ${userResponse}
 
-${user_response ? `User Response/Feedback: ${user_response}
-
-Please consider the user's response/feedback when formatting your answer. Incorporate their input to provide a more tailored and relevant response.` : ''}
-
-Please answer based on the provided document context. If the information is not available in the selected documents, please mention this clearly.${user_response ? ' Format your response considering the user\'s feedback provided above.' : ''}`;
+` : ''}Answer directly using the data above.${userResponse ? ' Use the exact format requested.' : ''} Do not ask follow-up questions or provide explanations beyond answering the question.`;
       } else {
-        enhancedPrompt = user_response 
-          ? `User Query: ${prompt}
+        enhancedPrompt = userResponse 
+          ? `Question: ${prompt}
 
-User Response/Feedback: ${user_response}
+Output Format: ${userResponse}
 
-Please provide an answer that takes into account the user's response/feedback to make it more relevant and tailored to their needs.`
+Provide a direct answer in the requested format.`
           : prompt;
       }
 
@@ -625,7 +620,7 @@ Please provide an answer that takes into account the user's response/feedback to
         success: true,
         data: {
           prompt: prompt,
-          user_response: user_response || null,
+          userResponse: userResponse || null,
           response: result.response,
           confidence: result.confidence,
           processingTime: result.processingTime,
@@ -645,7 +640,7 @@ Please provide an answer that takes into account the user's response/feedback to
           },
           
           recommendations: result.recommendations || [],
-          responseFormatting: user_response ? 'Response formatted considering user feedback' : 'Standard response format',
+          responseFormatting: userResponse ? 'Response formatted considering user feedback' : 'Standard response format',
           system: 'Enhanced Mastra.ai + SambaNova + Supabase with Document Selection',
           features: ['Document Selection', 'Enhanced Rate Limiting', 'Recommendation Engine', 'RAG Workflow', 'User Response Formatting']
         }
