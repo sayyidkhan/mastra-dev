@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
+import { CONFIG, buildSambaNovaUrl } from './constants';
 
 config();
 
@@ -60,7 +61,7 @@ export class SupabaseRAGSystem {
     config: RAGConfig,
     supabaseUrl: string,
     supabaseKey: string,
-    bucketName: string = 'financial-doc-bucket'
+    bucketName: string = CONFIG.SUPABASE.BUCKET_NAME
   ) {
     this.apiKey = apiKey;
     this.config = config;

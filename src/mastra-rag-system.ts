@@ -4,6 +4,7 @@ import { createTool } from '@mastra/core/tools';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
 import { z } from 'zod';
+import { CONFIG, buildSambaNovaUrl } from './constants';
 
 config();
 
@@ -18,11 +19,11 @@ interface QueryResult {
 // Custom SambaNova provider for Mastra
 class SambaNovaProvider {
   private apiKey: string;
-  private baseURL: string = 'https://api.sambanova.ai/v1';
+  private baseURL: string = CONFIG.SAMBANOVA.BASE_URL;
   private lastRequestTime: number = 0;
-  private rateLimitDelayMs: number = 8000; // 8 seconds between requests
+  private rateLimitDelayMs: number = CONFIG.RAG.RATE_LIMIT_DELAY_MS;
   private requestCount: number = 0;
-  private maxRequestsPerMinute: number = 5; // Maximum 5 requests per minute
+  private maxRequestsPerMinute: number = CONFIG.RAG.MAX_REQUESTS_PER_MINUTE;
   private lastResetTime: number = Date.now();
 
   constructor(apiKey: string) {
@@ -74,7 +75,7 @@ class SambaNovaProvider {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'Meta-Llama-3.1-8B-Instruct',
+        model: CONFIG.SAMBANOVA.MODELS.LLM,
         messages: args.prompt,
         max_tokens: args.maxTokens || 1000,
         temperature: args.temperature || 0.7,
@@ -104,7 +105,7 @@ class SambaNovaProvider {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'text-embedding-ada-002', // Use available embedding model
+        model: CONFIG.SAMBANOVA.MODELS.EMBEDDING,
         input: args.values
       })
     });
@@ -156,9 +157,9 @@ export class MastraRAGSystem {
 
           // Perform vector search in Supabase
           const { data: searchResults, error } = await this.supabase
-            .rpc('match_documents', {
+            .rpc(CONFIG.SUPABASE.FUNCTIONS.MATCH_DOCUMENTS, {
               query_embedding: queryEmbedding,
-              match_threshold: 0.5,
+              match_threshold: CONFIG.RAG.SIMILARITY_THRESHOLD,
               match_count: context.limit
             });
 
@@ -223,7 +224,7 @@ export class MastraRAGSystem {
     // Create custom model interface for SambaNova
     const customSambaModel = {
       provider: 'sambanova',
-      modelId: 'Meta-Llama-3.1-8B-Instruct',
+      modelId: CONFIG.SAMBANOVA.MODELS.LLM,
       doGenerate: this.sambaProvider.doGenerate.bind(this.sambaProvider),
       doStream: async (args: any) => {
         // For now, we'll just use generate and create a mock stream
@@ -277,8 +278,8 @@ When answering questions:
     
     // Test database connection
     try {
-      const { data, error } = await this.supabase.from('documents').select('count').limit(1);
-      if (error && !error.message.includes('relation "documents" does not exist')) {
+      const { data, error } = await this.supabase.from(CONFIG.SUPABASE.TABLES.DOCUMENTS).select('count').limit(1);
+      if (error && !error.message.includes(`relation "${CONFIG.SUPABASE.TABLES.DOCUMENTS}" does not exist`)) {
         throw error;
       }
       console.log('✅ Supabase connection established');
@@ -333,11 +334,11 @@ When answering questions:
   async getStats() {
     return {
       system: 'Mastra RAG with SambaNova',
-      model: 'Meta-Llama-3.1-8B-Instruct',
+      model: CONFIG.SAMBANOVA.MODELS.LLM,
       provider: 'SambaNova',
       rateLimiting: {
-        delayBetweenRequests: `${this.sambaProvider['rateLimitDelayMs'] / 1000}s`,
-        maxRequestsPerMinute: this.sambaProvider['maxRequestsPerMinute'],
+        delayBetweenRequests: `${CONFIG.RAG.RATE_LIMIT_DELAY_MS / 1000}s`,
+        maxRequestsPerMinute: CONFIG.RAG.MAX_REQUESTS_PER_MINUTE,
         currentRequestCount: this.sambaProvider['requestCount']
       },
       features: [
