@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from 'dotenv';
 import { SupabaseRAGSystem } from './supabase-rag-system';
+import { MastraRAGSystem } from './mastra-rag-system';
 
 // Load environment variables
 config();
@@ -19,6 +20,15 @@ interface DocumentRequest {
 
 interface QueryRequest {
   prompt: string;
+}
+
+// Enhanced query request with document selection
+interface EnhancedQueryRequest {
+  prompt: string;
+  documentIds?: string[];  // Optional: specific documents to query against
+  documentNames?: string[]; // Optional: query by document names
+  tags?: string[];         // Optional: query documents with specific tags
+  useAllDocuments?: boolean; // Optional: use all available documents
 }
 
 interface ApiResponse<T = any> {
@@ -41,8 +51,9 @@ interface FileUpload {
   fields: any;
 }
 
-// Initialize RAG system
+// Initialize RAG systems
 let ragSystem: SupabaseRAGSystem | null = null;
+let mastraRagSystem: MastraRAGSystem | null = null;
 
 async function initializeRAGSystem() {
   if (!process.env.SAMBANOVA_API_KEY) {
@@ -72,6 +83,16 @@ async function initializeRAGSystem() {
 
   await ragSystem.initialize();
   console.log('✅ Supabase RAG System initialized');
+
+  // Initialize Mastra RAG system for enhanced query processing
+  mastraRagSystem = new MastraRAGSystem(
+    process.env.SAMBANOVA_API_KEY,
+    process.env.SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
+  await mastraRagSystem.initialize();
+  console.log('✅ Mastra RAG System initialized with enhanced rate limiting');
 }
 
 // Build Fastify app
@@ -111,30 +132,46 @@ async function buildApp(): Promise<FastifyInstance> {
   fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
     return {
       success: true,
-      message: 'SambaNova RAG API with Supabase is running (Fastify)',
+      message: 'SambaNova RAG API with Mastra.ai + Supabase (Fastify)',
       timestamp: new Date().toISOString(),
-      system_initialized: ragSystem !== null,
+      systems: {
+        supabase_rag: ragSystem !== null,
+        mastra_rag: mastraRagSystem !== null
+      },
       storage: 'Supabase Storage + PostgreSQL',
-      framework: 'Fastify'
+      framework: 'Fastify + Mastra.ai',
+      query_system: 'Mastra.ai with Enhanced Rate Limiting'
     };
   });
 
   // Get system statistics
   fastify.get('/stats', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      if (!ragSystem) {
+      if (!ragSystem || !mastraRagSystem) {
         reply.code(500);
         return {
           success: false,
-          error: 'RAG system not initialized'
+          error: 'RAG systems not initialized'
         } as ApiResponse;
       }
 
-      const detailedStats = await ragSystem.getDetailedStats();
+      const [supabaseStats, mastraStats] = await Promise.all([
+        ragSystem.getDetailedStats(),
+        mastraRagSystem.getStats()
+      ]);
       
       return {
         success: true,
-        data: detailedStats
+        data: {
+          supabase_system: supabaseStats,
+          mastra_system: mastraStats,
+          active_query_system: 'Mastra.ai (Enhanced Rate Limiting)',
+          rate_limiting: {
+            delay_between_requests: '8 seconds',
+            max_requests_per_minute: 5,
+            features: ['Conservative Rate Limiting', 'Request Count Tracking', 'Auto Rate Reset']
+          }
+        }
       } as ApiResponse;
     } catch (error: any) {
       fastify.log.error('Error getting stats:', error);
@@ -469,18 +506,160 @@ async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Query the RAG system
-  fastify.post<{ Body: QueryRequest }>('/query', {
+  // Enhanced RAG query with document selection
+  fastify.post<{ Body: EnhancedQueryRequest }>('/query', {
     schema: {
       body: {
         type: 'object',
         required: ['prompt'],
         properties: {
-          prompt: { type: 'string', minLength: 1 }
+          prompt: { type: 'string', minLength: 1 },
+          documentIds: { 
+            type: 'array', 
+            items: { type: 'string' },
+            description: 'Specific document IDs to query against'
+          },
+          documentNames: { 
+            type: 'array', 
+            items: { type: 'string' },
+            description: 'Specific document names to query against'
+          },
+          tags: { 
+            type: 'array', 
+            items: { type: 'string' },
+            description: 'Query documents with specific tags'
+          },
+          useAllDocuments: { 
+            type: 'boolean', 
+            default: false,
+            description: 'Use all available documents for context'
+          }
         }
       }
     }
-  }, async (request: FastifyRequest<{ Body: QueryRequest }>, reply: FastifyReply) => {
+  }, async (request: FastifyRequest<{ Body: EnhancedQueryRequest }>, reply: FastifyReply) => {
+    try {
+      if (!mastraRagSystem || !ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG systems not initialized'
+        } as ApiResponse;
+      }
+
+      const { prompt, documentIds, documentNames, tags, useAllDocuments } = request.body;
+
+      // Step 1: Get available documents and filter based on selection criteria
+      let selectedDocuments: any[] = [];
+      let selectionCriteria: string[] = [];
+
+      if (documentIds && documentIds.length > 0) {
+        const allDocs = await ragSystem.getAllDocuments();
+        selectedDocuments = allDocs.filter(doc => documentIds.includes(doc.id));
+        selectionCriteria.push(`Document IDs: ${documentIds.join(', ')}`);
+      }
+
+      if (documentNames && documentNames.length > 0) {
+        const allDocs = await ragSystem.getAllDocuments();
+        const nameSelected = allDocs.filter(doc => 
+          documentNames.some(name => 
+            doc.file_name.toLowerCase().includes(name.toLowerCase()) ||
+            doc.source.toLowerCase().includes(name.toLowerCase())
+          )
+        );
+        selectedDocuments = selectedDocuments.length > 0 
+          ? selectedDocuments.filter(doc => nameSelected.some(ns => ns.id === doc.id))
+          : nameSelected;
+        selectionCriteria.push(`Document Names: ${documentNames.join(', ')}`);
+      }
+
+      if (tags && tags.length > 0) {
+        const allDocs = await ragSystem.getAllDocuments();
+        const tagSelected = allDocs.filter(doc => 
+          tags.some(tag => doc.tags.includes(tag))
+        );
+        selectedDocuments = selectedDocuments.length > 0 
+          ? selectedDocuments.filter(doc => tagSelected.some(ts => ts.id === doc.id))
+          : tagSelected;
+        selectionCriteria.push(`Tags: ${tags.join(', ')}`);
+      }
+
+      if (useAllDocuments || (selectedDocuments.length === 0 && !documentIds && !documentNames && !tags)) {
+        selectedDocuments = await ragSystem.getAllDocuments();
+        selectionCriteria.push('All available documents');
+      }
+
+      console.log(`🔍 API: Enhanced query with document selection:`);
+      console.log(`   Query: "${prompt}"`);
+      console.log(`   Selection criteria: ${selectionCriteria.join(' | ')}`);
+      console.log(`   Selected documents: ${selectedDocuments.length}`);
+
+      // Step 2: Create context from selected documents for the AI
+      const documentContext = selectedDocuments.map(doc => ({
+        id: doc.id,
+        name: doc.file_name,
+        source: doc.source,
+        content: doc.content.substring(0, 1000), // First 1000 chars for context
+        tags: doc.tags,
+        size: doc.file_size
+      }));
+
+      // Step 3: Enhanced prompt with document context
+      const enhancedPrompt = selectedDocuments.length > 0 
+        ? `Context: You have access to ${selectedDocuments.length} selected document(s):
+${documentContext.map(doc => `- ${doc.name} (ID: ${doc.id}, Tags: ${doc.tags.join(', ')})`).join('\n')}
+
+Available document content for reference:
+${documentContext.map(doc => `Document "${doc.name}":\n${doc.content}...`).join('\n\n')}
+
+User Query: ${prompt}
+
+Please answer based on the provided document context. If the information is not available in the selected documents, please mention this clearly.`
+        : prompt;
+
+      // Step 4: Process query with Mastra.ai
+      const result = await mastraRagSystem.query(enhancedPrompt);
+
+      return {
+        success: true,
+        data: {
+          prompt: prompt,
+          response: result.response,
+          confidence: result.confidence,
+          processingTime: result.processingTime,
+          
+          // Document selection details
+          documentSelection: {
+            criteria: selectionCriteria,
+            selectedCount: selectedDocuments.length,
+            selectedDocuments: documentContext.map(doc => ({
+              id: doc.id,
+              name: doc.name,
+              source: doc.source,
+              tags: doc.tags,
+              contentLength: doc.content.length,
+              preview: doc.content.substring(0, 100) + '...'
+            }))
+          },
+          
+          recommendations: result.recommendations || [],
+          system: 'Enhanced Mastra.ai + SambaNova + Supabase with Document Selection',
+          features: ['Document Selection', 'Enhanced Rate Limiting', 'Recommendation Engine', 'RAG Workflow']
+        }
+      } as ApiResponse;
+
+    } catch (error: any) {
+      fastify.log.error('Error processing enhanced query:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // List documents for selection (lightweight version for query planning)
+  fastify.get('/documents', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       if (!ragSystem) {
         reply.code(500);
@@ -490,31 +669,39 @@ async function buildApp(): Promise<FastifyInstance> {
         } as ApiResponse;
       }
 
-      const { prompt } = request.body;
+      const documents = await ragSystem.getAllDocuments();
 
-      console.log(`🔍 API: Processing query: "${prompt}"`);
-      const result = await ragSystem.query(prompt.trim());
+      // Lightweight document list for selection purposes
+      const documentList = documents.map(doc => ({
+        id: doc.id,
+        name: doc.file_name,
+        source: doc.source,
+        tags: doc.tags,
+        size: `${(doc.file_size / 1024).toFixed(1)} KB`,
+        type: doc.file_type,
+        contentPreview: doc.content.substring(0, 150) + '...',
+        createdAt: doc.created_at
+      }));
 
       return {
         success: true,
+        message: `${documents.length} documents available for selection`,
         data: {
-          prompt: prompt,
-          response: result.response,
-          confidence: result.confidence,
-          processingTime: result.processingTime,
-          contextDocuments: result.context.length,
-          sources: result.context.map(doc => doc.metadata.source),
-          context: result.context.map(doc => ({
-            id: doc.id,
-            source: doc.metadata.source,
-            fileName: doc.metadata.source,
-            preview: doc.content.substring(0, 100) + '...'
-          }))
+          totalDocuments: documents.length,
+          documents: documentList,
+          availableTags: [...new Set(documents.flatMap(doc => doc.tags))],
+          fileTypes: [...new Set(documents.map(doc => doc.file_type))],
+          usage: {
+            byId: 'Use "documentIds" array with specific document IDs',
+            byName: 'Use "documentNames" array with document names (partial match)',
+            byTags: 'Use "tags" array to filter by document tags',
+            all: 'Use "useAllDocuments": true to include all documents'
+          }
         }
       } as ApiResponse;
 
     } catch (error: any) {
-      fastify.log.error('Error processing query:', error);
+      fastify.log.error('Error fetching documents list:', error);
       reply.code(500);
       return {
         success: false,
@@ -662,10 +849,11 @@ async function startServer() {
     console.log('  GET  /health                    - Health check');
     console.log('  GET  /stats                     - System statistics');
     console.log('  POST /upload                    - Upload files to Supabase');
-    console.log('  GET  /view                      - View all documents');
+    console.log('  GET  /documents                 - List documents for selection');
+    console.log('  GET  /view                      - View all documents (detailed)');
     console.log('  GET  /view/:id                  - View single document');
     console.log('  POST /documents                 - Add documents (JSON)');
-    console.log('  POST /query                     - Query the RAG system');
+    console.log('  POST /query                     - Enhanced RAG query with document selection');
     console.log('  DELETE /documents/:id           - Delete single document');
     console.log('  DELETE /documents               - Clear all documents');
     console.log('\n🔑 Environment variables required:');

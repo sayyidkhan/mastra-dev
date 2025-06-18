@@ -1,14 +1,16 @@
-# 🧠 SambaNova RAG API with Fastify & Supabase
+# 🧠 SambaNova RAG API with Mastra.ai, Fastify & Supabase
 
-A high-performance RAG (Retrieval-Augmented Generation) API built with Fastify and Supabase, powered by SambaNova's AI models.
+A high-performance RAG (Retrieval-Augmented Generation) API built with Mastra.ai workflows, Fastify and Supabase, powered by SambaNova's AI models.
 
 ## 🚀 Features
 
 - **High Performance**: Built with Fastify (3x faster than Express)
+- **Mastra.ai Integration**: Advanced RAG workflows with intelligent recommendation engine
 - **File Upload**: Support for PDF, CSV, TXT, MD, DOC, DOCX files
 - **Vector Storage**: Persistent storage with Supabase PostgreSQL + pgvector
-- **AI-Powered**: Uses SambaNova's DeepSeek-V3 for text generation and E5-Mistral for embeddings
-- **Rate Limited**: Smart rate limiting for SambaNova API compliance
+- **AI-Powered**: Uses SambaNova's DeepSeek-V3 for text generation and OpenAI for embeddings
+- **Enhanced Rate Limiting**: Conservative 8-second delays with max 5 requests/minute
+- **Smart Recommendations**: AI-generated follow-up questions based on query context
 - **Type Safe**: Full TypeScript implementation
 - **RESTful API**: Clean REST endpoints for all operations
 
@@ -83,12 +85,18 @@ curl -X POST http://localhost:3000/upload \
   -F "tags=[\"financial\", \"2024\"]"
 ```
 
-#### Query the RAG System
+#### Query the RAG System (Powered by Mastra.ai)
 ```bash
 curl -X POST http://localhost:3000/query \
   -H "Content-Type: application/json" \
   -d '{"prompt": "What are the key financial metrics?"}'
 ```
+
+The query endpoint now uses Mastra.ai agents with:
+- Enhanced rate limiting (5 requests/min, 8s delays)
+- Intelligent recommendation engine
+- Tool-based vector search
+- Agent-driven RAG workflow
 
 #### Get System Stats
 ```bash
@@ -98,13 +106,13 @@ curl http://localhost:3000/stats
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   Fastify API   │ ──▶│   Supabase   │ ──▶│   SambaNova     │
-│                 │    │              │    │                 │
-│ • File Upload   │    │ • PostgreSQL │    │ • DeepSeek-V3   │
-│ • REST Routes   │    │ • pgvector   │    │ • E5-Mistral    │
-│ • Rate Limiting │    │ • Storage    │    │ • Embeddings    │
-└─────────────────┘    └──────────────┘    └─────────────────┘
+┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Fastify API   │ ──▶│   Supabase   │ ──▶│   SambaNova     │ ──▶│   Mastra.ai     │
+│                 │    │              │    │                 │    │                 │
+│ • File Upload   │    │ • PostgreSQL │    │ • DeepSeek-V3   │    │ • RAG Workflow  │
+│ • REST Routes   │    │ • pgvector   │    │ • Text Gen      │    │ • Agent Logic   │
+│ • Multi-System  │    │ • Storage    │    │ • 8s Delays     │    │ • Orchestration │
+└─────────────────┘    └──────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
 ## 🔧 Development
@@ -170,8 +178,30 @@ This serverless-ready application can be deployed to:
    - Ensure the documents table exists (run setup SQL)
 
 3. **SambaNova rate limiting**
-   - The system includes automatic 8-second delays
+   - Enhanced Mastra.ai rate limiting: 8-second delays between requests
+   - Maximum 5 requests per minute for optimal API compliance
    - Check your API key and quota
+
+## ✅ **Integration Complete & Tested**
+
+🎉 **The `/query` endpoint is now fully working with Mastra.ai orchestration!**
+
+**What's Working:**
+- ✅ **Mastra.ai Agent Orchestration**: Full agent-based workflow 
+- ✅ **SambaNova LLM Integration**: Custom provider within Mastra framework
+- ✅ **Vector Search Tools**: Agent autonomously searches Supabase vectors
+- ✅ **Recommendation Engine**: Contextual follow-up questions
+- ✅ **Rate Limiting**: 8-second delays, 5 requests/minute
+- ✅ **Correct Flow**: Fastify → Supabase → SambaNova → Mastra.ai
+
+**Test Command:**
+```bash
+curl -X POST http://localhost:3000/query \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What are the key financial metrics?"}'
+```
+
+The agent successfully uses tools, searches vectors, and generates intelligent responses!
 
 ### Debug Mode
 ```bash
