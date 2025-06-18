@@ -61,13 +61,13 @@ export const CONFIG = {
     TIME_WINDOW: '1 minute'
   },
 
-  // Environment Variables (with defaults)
+  // Environment Variables (hardcoded for demo)
   ENV: {
-    get NODE_ENV() { return process.env.NODE_ENV || 'development'; },
+    get NODE_ENV() { return process.env.NODE_ENV || 'production'; },
     get PORT() { return process.env.PORT || '3000'; },
-    get SAMBANOVA_API_KEY() { return process.env.SAMBANOVA_API_KEY || ''; },
-    get SUPABASE_DATABASE_URL() { return process.env.SUPABASE_DATABASE_URL || ''; },
-    get SUPABASE_SERVICE_ROLE_KEY() { return process.env.SUPABASE_SERVICE_ROLE_KEY || ''; }
+    get SAMBANOVA_API_KEY() { return '8cf2eba3-ec3a-4a3f-ab9e-ff7b8de4aadf'; },
+    get SUPABASE_DATABASE_URL() { return 'https://jjrmjtowkvzyrxkrfbqe.supabase.co'; },
+    get SUPABASE_SERVICE_ROLE_KEY() { return 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impqcm1qdG93a3Z6eXJ4a3JmYnFlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MDE2OTA3OSwiZXhwIjoyMDY1NzQ1MDc5fQ.hw8lmZilot-g-I5c9xQlpESuarKHYwUDuHDUVnsIRLU'; }
   },
 
   // API Endpoints
