@@ -1,0 +1,704 @@
+import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { config } from 'dotenv';
+import { SupabaseRAGSystem } from './supabase-rag-system';
+
+// Load environment variables
+config();
+
+// Type definitions
+interface DocumentRequest {
+  documents: {
+    id: string;
+    content: string;
+    metadata: {
+      source: string;
+      tags?: string[];
+    };
+  }[];
+}
+
+interface QueryRequest {
+  prompt: string;
+}
+
+interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+interface RouteParams {
+  id: string;
+}
+
+// File upload interface for multipart
+interface FileUpload {
+  filename: string;
+  encoding: string;
+  mimetype: string;
+  file: NodeJS.ReadableStream;
+  fields: any;
+}
+
+// Initialize RAG system
+let ragSystem: SupabaseRAGSystem | null = null;
+
+async function initializeRAGSystem() {
+  if (!process.env.SAMBANOVA_API_KEY) {
+    throw new Error('SAMBANOVA_API_KEY environment variable is required');
+  }
+
+  if (!process.env.SUPABASE_DATABASE_URL) {
+    throw new Error('SUPABASE_DATABASE_URL environment variable is required');
+  }
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY environment variable is required');
+  }
+
+  ragSystem = new SupabaseRAGSystem(
+    process.env.SAMBANOVA_API_KEY,
+    {
+      maxContextDocuments: 3,
+      similarityThreshold: 0.3,
+      embeddingDimension: 4096,
+      rateLimitDelayMs: 8000 // 8 seconds between requests
+    },
+    process.env.SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    'financial-doc-bucket'
+  );
+
+  await ragSystem.initialize();
+  console.log('✅ Supabase RAG System initialized');
+}
+
+// Build Fastify app
+async function buildApp(): Promise<FastifyInstance> {
+  const fastify = Fastify({
+    logger: {
+      level: 'info'
+    },
+    bodyLimit: 10485760, // 10MB for file uploads
+    keepAliveTimeout: 65000,
+    requestTimeout: 60000
+  });
+
+  // Register plugins
+  await fastify.register(require('@fastify/cors'), {
+    origin: true,
+    credentials: true
+  });
+
+  await fastify.register(require('@fastify/helmet'), {
+    contentSecurityPolicy: false
+  });
+
+  await fastify.register(require('@fastify/rate-limit'), {
+    max: 100,
+    timeWindow: '1 minute'
+  });
+
+  await fastify.register(require('@fastify/multipart'), {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit
+      files: 1
+    }
+  });
+
+  // Health check endpoint
+  fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
+    return {
+      success: true,
+      message: 'SambaNova RAG API with Supabase is running (Fastify)',
+      timestamp: new Date().toISOString(),
+      system_initialized: ragSystem !== null,
+      storage: 'Supabase Storage + PostgreSQL',
+      framework: 'Fastify'
+    };
+  });
+
+  // Get system statistics
+  fastify.get('/stats', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const detailedStats = await ragSystem.getDetailedStats();
+      
+      return {
+        success: true,
+        data: detailedStats
+      } as ApiResponse;
+    } catch (error: any) {
+      fastify.log.error('Error getting stats:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Upload file endpoint
+  fastify.post('/upload', async (request: any, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const data = await request.file();
+      if (!data) {
+        reply.code(400);
+        return {
+          success: false,
+          error: 'No file uploaded'
+        } as ApiResponse;
+      }
+
+      // Validate file type
+      const allowedTypes = [
+        'text/plain',
+        'text/markdown',
+        'text/csv',
+        'application/csv',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/octet-stream' // For files where MIME type isn't detected correctly
+      ];
+
+      // Check by file extension if MIME type is generic
+      const filename = data.filename || '';
+      const extension = filename.toLowerCase().split('.').pop();
+      const allowedExtensions = ['txt', 'md', 'csv', 'pdf', 'doc', 'docx'];
+
+      console.log(`📁 DEBUG: File details:`, {
+        filename: data.filename,
+        mimetype: data.mimetype,
+        encoding: data.encoding,
+        extension: extension
+      });
+
+      const isMimeTypeAllowed = allowedTypes.includes(data.mimetype);
+      const isExtensionAllowed = allowedExtensions.includes(extension || '');
+      
+      if (!isMimeTypeAllowed && !isExtensionAllowed) {
+        reply.code(400);
+        return {
+          success: false,
+          error: `File type not supported. Received: ${data.mimetype} (${extension}). Allowed types: ${allowedTypes.join(', ')} or extensions: ${allowedExtensions.join(', ')}`
+        } as ApiResponse;
+      }
+
+      // Convert stream to buffer
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) {
+        chunks.push(chunk);
+      }
+      const buffer = Buffer.concat(chunks);
+
+      // Create file object compatible with existing uploadFile method
+      const fileObj = {
+        fieldname: 'file',
+        originalname: data.filename,
+        encoding: data.encoding,
+        mimetype: data.mimetype,
+        buffer: buffer,
+        size: buffer.length,
+        stream: data.file,
+        destination: '',
+        filename: data.filename,
+        path: ''
+      };
+
+      // Parse tags from fields if provided
+      let tags: string[] = [];
+      if (data.fields) {
+        const tagsField = (data.fields as any).tags;
+        if (tagsField && tagsField.value) {
+          try {
+            tags = typeof tagsField.value === 'string' ? JSON.parse(tagsField.value) : tagsField.value;
+          } catch (e) {
+            tags = tagsField.value.split(',').map((tag: string) => tag.trim());
+          }
+        }
+      }
+
+      console.log(`📁 API: Uploading file: ${data.filename}`);
+      const result = await ragSystem.uploadFile(fileObj, tags);
+
+      const response = {
+        success: true,
+        message: `Successfully uploaded and processed: ${data.filename}`,
+        data: {
+          document: {
+            id: result.document.id,
+            fileName: result.document.metadata.source,
+            fileSize: fileObj.size,
+            fileType: fileObj.mimetype,
+            source: result.document.metadata.source,
+            tags: result.document.metadata.tags,
+            timestamp: result.document.metadata.timestamp
+          },
+          fileUrl: result.fileUrl,
+          contentPreview: result.document.content.substring(0, 200) + '...'
+        }
+      } as ApiResponse;
+
+      // Pretty print the upload response to console
+      console.log('📁 Upload Response:');
+      console.log(JSON.stringify(response, null, 2));
+
+      return response;
+
+    } catch (error: any) {
+      fastify.log.error('Error uploading file:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // View all documents endpoint
+  fastify.get('/view', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      console.log('📄 API: Fetching all documents...');
+      const documents = await ragSystem.getAllDocuments();
+
+      // Clean format with better structure and all attributes
+      const formattedDocs = documents.map(doc => ({
+        document_name: doc.file_name,
+        document_id: doc.id,
+        tags: doc.tags,
+        file_info: {
+          size_kb: parseFloat((doc.file_size / 1024).toFixed(1)),
+          size_mb: parseFloat((doc.file_size / 1024 / 1024).toFixed(2)),
+          type: doc.file_type,
+          source: doc.source
+        },
+        content_info: {
+          length: doc.content.length,
+          preview: doc.content.substring(0, 100) + (doc.content.length > 100 ? '...' : '')
+        },
+        timestamps: {
+          created_at: doc.created_at,
+          updated_at: doc.updated_at
+        },
+        storage_path: doc.storage_path
+      }));
+
+      const totalSize = documents.reduce((sum, doc) => sum + doc.file_size, 0);
+      
+      const response = {
+        success: true,
+        message: `Found ${documents.length} documents`,
+        data: {
+          summary: {
+            total_documents: documents.length,
+            total_size_kb: parseFloat((totalSize / 1024).toFixed(1)),
+            total_size_mb: parseFloat((totalSize / 1024 / 1024).toFixed(2)),
+            file_types: [...new Set(documents.map(doc => doc.file_type))],
+            all_tags: [...new Set(documents.flatMap(doc => doc.tags))]
+          },
+          documents: formattedDocs
+        }
+      } as ApiResponse;
+
+      // Pretty print the response to console
+      console.log('📄 API Response:');
+      console.log(JSON.stringify(response, null, 2));
+
+      return response;
+
+    } catch (error: any) {
+      fastify.log.error('Error fetching documents:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Get single document by ID
+  fastify.get<{ Params: RouteParams }>('/view/:id', async (request: FastifyRequest<{ Params: RouteParams }>, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const { id } = request.params;
+      const documents = await ragSystem.getAllDocuments();
+      const document = documents.find(doc => doc.id === id);
+
+      if (!document) {
+        reply.code(404);
+        return {
+          success: false,
+          error: 'Document not found'
+        } as ApiResponse;
+      }
+
+      return {
+        success: true,
+        data: {
+          id: document.id,
+          fileName: document.file_name,
+          fileSize: document.file_size,
+          fileSizeMB: (document.file_size / 1024 / 1024).toFixed(2),
+          fileType: document.file_type,
+          source: document.source,
+          tags: document.tags,
+          content: document.content,
+          createdAt: document.created_at,
+          updatedAt: document.updated_at,
+          storagePath: document.storage_path
+        }
+      } as ApiResponse;
+
+    } catch (error: any) {
+      fastify.log.error('Error fetching document:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Add documents endpoint (backward compatibility)
+  fastify.post<{ Body: DocumentRequest }>('/documents', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['documents'],
+        properties: {
+          documents: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['id', 'content', 'metadata'],
+              properties: {
+                id: { type: 'string' },
+                content: { type: 'string' },
+                metadata: {
+                  type: 'object',
+                  required: ['source'],
+                  properties: {
+                    source: { type: 'string' },
+                    tags: {
+                      type: 'array',
+                      items: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: DocumentRequest }>, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const { documents } = request.body;
+
+      // Transform documents to match internal format
+      const formattedDocs = documents.map(doc => ({
+        id: doc.id,
+        content: doc.content,
+        metadata: {
+          id: doc.id,
+          source: doc.metadata.source,
+          timestamp: new Date(),
+          tags: doc.metadata.tags || []
+        }
+      }));
+
+      console.log(`📄 API: Adding ${documents.length} documents...`);
+      await ragSystem.addDocuments(formattedDocs);
+
+      return {
+        success: true,
+        message: `Successfully added ${documents.length} documents`,
+        data: {
+          documentsAdded: documents.length,
+          totalDocuments: ragSystem.getStats().totalDocuments
+        }
+      } as ApiResponse;
+
+    } catch (error: any) {
+      fastify.log.error('Error adding documents:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Query the RAG system
+  fastify.post<{ Body: QueryRequest }>('/query', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['prompt'],
+        properties: {
+          prompt: { type: 'string', minLength: 1 }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: QueryRequest }>, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const { prompt } = request.body;
+
+      console.log(`🔍 API: Processing query: "${prompt}"`);
+      const result = await ragSystem.query(prompt.trim());
+
+      return {
+        success: true,
+        data: {
+          prompt: prompt,
+          response: result.response,
+          confidence: result.confidence,
+          processingTime: result.processingTime,
+          contextDocuments: result.context.length,
+          sources: result.context.map(doc => doc.metadata.source),
+          context: result.context.map(doc => ({
+            id: doc.id,
+            source: doc.metadata.source,
+            fileName: doc.metadata.source,
+            preview: doc.content.substring(0, 100) + '...'
+          }))
+        }
+      } as ApiResponse;
+
+    } catch (error: any) {
+      fastify.log.error('Error processing query:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Delete document endpoint
+  fastify.delete<{ Params: RouteParams }>('/documents/:id', async (request: FastifyRequest<{ Params: RouteParams }>, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      const { id } = request.params;
+      const success = await ragSystem.deleteDocument(id);
+
+      if (success) {
+        return {
+          success: true,
+          message: `Document ${id} deleted successfully`
+        } as ApiResponse;
+      } else {
+        reply.code(404);
+        return {
+          success: false,
+          error: 'Document not found'
+        } as ApiResponse;
+      }
+
+    } catch (error: any) {
+      fastify.log.error('Error deleting document:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Clear all documents (useful for testing)
+  fastify.delete('/documents', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      if (!ragSystem) {
+        reply.code(500);
+        return {
+          success: false,
+          error: 'RAG system not initialized'
+        } as ApiResponse;
+      }
+
+      await ragSystem.clearDocuments();
+      
+      return {
+        success: true,
+        message: 'All documents cleared successfully'
+      } as ApiResponse;
+
+    } catch (error: any) {
+      fastify.log.error('Error clearing documents:', error);
+      reply.code(500);
+      return {
+        success: false,
+        error: error.message
+      } as ApiResponse;
+    }
+  });
+
+  // Global error handler
+  fastify.setErrorHandler(async (error, request, reply) => {
+    fastify.log.error(error);
+    
+    // Handle multipart errors
+    if (error.code === 'FST_REQ_FILE_TOO_LARGE') {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'File too large. Maximum size is 10MB.'
+      } as ApiResponse;
+    }
+
+    // Handle validation errors
+    if (error.validation) {
+      reply.code(400);
+      return {
+        success: false,
+        error: 'Validation error: ' + error.message
+      } as ApiResponse;
+    }
+
+    // Handle rate limiting
+    if (error.statusCode === 429) {
+      reply.code(429);
+      return {
+        success: false,
+        error: 'Too many requests. Please try again later.'
+      } as ApiResponse;
+    }
+
+    reply.code(500);
+    return {
+      success: false,
+      error: 'Internal server error'
+    } as ApiResponse;
+  });
+
+  // 404 handler
+  fastify.setNotFoundHandler(async (request, reply) => {
+    reply.code(404);
+    return {
+      success: false,
+      error: 'Endpoint not found'
+    } as ApiResponse;
+  });
+
+  return fastify;
+}
+
+// Start server function
+async function startServer() {
+  const PORT = process.env.PORT || 3000;
+  
+  try {
+    console.log('🚀 Starting SambaNova RAG API Server with Supabase (Fastify)...\n');
+    
+    // Initialize RAG system
+    await initializeRAGSystem();
+    
+    // Build Fastify app
+    const fastify = await buildApp();
+    
+    // Start listening
+    await fastify.listen({ 
+      port: Number(PORT), 
+      host: '0.0.0.0' 
+    });
+    
+    console.log(`\n🌟 SambaNova RAG API Server running on http://localhost:${PORT}`);
+    console.log('\n📚 Available endpoints:');
+    console.log('  GET  /health                    - Health check');
+    console.log('  GET  /stats                     - System statistics');
+    console.log('  POST /upload                    - Upload files to Supabase');
+    console.log('  GET  /view                      - View all documents');
+    console.log('  GET  /view/:id                  - View single document');
+    console.log('  POST /documents                 - Add documents (JSON)');
+    console.log('  POST /query                     - Query the RAG system');
+    console.log('  DELETE /documents/:id           - Delete single document');
+    console.log('  DELETE /documents               - Clear all documents');
+    console.log('\n🔑 Environment variables required:');
+    console.log('  - SAMBANOVA_API_KEY');
+    console.log('  - SUPABASE_DATABASE_URL');
+    console.log('  - SUPABASE_SERVICE_ROLE_KEY');
+    console.log('\n💾 Storage: Supabase (financial-doc-bucket)');
+    console.log('⚡ Framework: Fastify (3x faster than Express)');
+    console.log('⏱️  API includes automatic rate limiting for SambaNova');
+
+    return fastify;
+
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+async function gracefulShutdown(fastify: FastifyInstance) {
+  console.log('\n👋 Shutting down SambaNova RAG API Server...');
+  await fastify.close();
+  process.exit(0);
+}
+
+// Start the server
+if (require.main === module) {
+  startServer().then((fastify) => {
+    if (fastify) {
+      process.on('SIGINT', () => gracefulShutdown(fastify));
+      process.on('SIGTERM', () => gracefulShutdown(fastify));
+    }
+  });
+}
+
+export { buildApp, startServer }; 
