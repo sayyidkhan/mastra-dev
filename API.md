@@ -212,7 +212,7 @@ curl -X POST https://your-url.com/query \
   -d '{
     "prompt": "Which company has the highest revenue per employee?",
     "documentNames": ["sample-financial-data"],
-    "user_response": "I need this information for a board presentation, please format it professionally with key metrics highlighted"
+    "userResponse": "I need this information for a board presentation, please format it professionally with key metrics highlighted"
   }'
 ```
 
@@ -224,7 +224,7 @@ curl -X POST https://your-url.com/query \
   "documentNames": ["restaurant-data"],             // Optional: by name (partial match)
   "tags": ["financial", "2024"],                    // Optional: by tags
   "useAllDocuments": true,                          // Optional: use all documents
-  "user_response": "user feedback here"             // Optional: user response for formatting
+  "userResponse": "user feedback here"              // Optional: user response for formatting
 }
 ```
 
@@ -234,7 +234,7 @@ curl -X POST https://your-url.com/query \
   "success": true,
   "data": {
     "prompt": "What are the key financial insights?",
-    "user_response": "I need this for a board presentation, please format professionally",
+    "userResponse": "I need this for a board presentation, please format professionally",
     "response": "**Executive Summary: Key Financial Insights**\n\n📊 **Performance Highlights:**\n- Restaurant A shows higher profitability with a 15% profit margin compared to Restaurant B's 12%\n- Revenue growth indicates strong market position...\n\n*Formatted for board presentation as requested*",
     "documentSelection": {
       "criteria": ["All documents"],
@@ -341,4 +341,134 @@ All endpoints return errors in this format:
 2. **Use specific prompts** for better AI responses
 3. **Check document list** before querying to see what's available
 4. **CSV files work best** for data analysis
-5. **Keep files under 10MB** for optimal performance 
+5. **Keep files under 10MB** for optimal performance
+
+---
+
+## 🎯 UserResponse Examples
+
+The `userResponse` field allows you to specify how you want the AI to format its response. Here are practical examples:
+
+### JSON Object Response
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What are the revenue figures for both restaurants?",
+    "tags": ["financial"],
+    "userResponse": "Please return the data as a JSON object with restaurant names as keys and their revenue, profit margin, and growth rate as values. Include a summary object with totals."
+  }'
+```
+
+**Expected Response Format:**
+```json
+{
+  "restaurants": {
+    "Restaurant A": {
+      "revenue": "$2,500,000",
+      "profit_margin": "15%",
+      "growth_rate": "8.5%"
+    },
+    "Restaurant B": {
+      "revenue": "$1,800,000", 
+      "profit_margin": "12%",
+      "growth_rate": "6.2%"
+    }
+  },
+  "summary": {
+    "total_revenue": "$4,300,000",
+    "average_profit_margin": "13.5%",
+    "industry_performance": "Above average"
+  }
+}
+```
+
+### Table Format Response
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Compare the financial performance of both restaurants",
+    "useAllDocuments": true,
+    "userResponse": "Format as a markdown table with columns: Restaurant, Revenue, Expenses, Profit, Margin%. Add a summary row at the bottom."
+  }'
+```
+
+### Executive Summary Format
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What are the key insights from the financial data?",
+    "tags": ["financial"],
+    "userResponse": "I need this for a board presentation. Format as: 1) Executive Summary (3 bullet points), 2) Key Metrics (in a box format), 3) Recommendations (numbered list), 4) Risk Assessment (brief paragraph). Use professional business language."
+  }'
+```
+
+### Structured Data Format
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Extract all expense categories and amounts",
+    "documentNames": ["Restaurant A - Income Statement"],
+    "userResponse": "Return as a structured JSON with categories as keys and objects containing amount, percentage_of_revenue, and year_over_year_change. Also include metadata about the analysis."
+  }'
+```
+
+### Quick Dashboard Format
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Give me a financial overview of both restaurants",
+    "useAllDocuments": true,
+    "userResponse": "Format like a dashboard with emoji indicators: 📈 for growth, 📉 for decline, ⚠️ for concerns, ✅ for good performance. Include 5 key metrics with status indicators."
+  }'
+```
+
+### API-Ready JSON Response
+```bash
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What are the main financial KPIs for each restaurant?",
+    "tags": ["financial"],
+    "userResponse": "Return as a clean JSON object suitable for API consumption with: restaurant_id, name, kpis array (each with metric_name, value, unit, trend), last_updated timestamp, and data_quality_score."
+  }'
+```
+
+**Example API-Ready Response:**
+```json
+{
+  "financial_summary": {
+    "analysis_date": "2024-01-15",
+    "restaurants": [
+      {
+        "restaurant_id": "rest_a",
+        "name": "Restaurant A",
+        "kpis": [
+          {
+            "metric_name": "revenue",
+            "value": 2500000,
+            "unit": "USD",
+            "trend": "increasing"
+          },
+          {
+            "metric_name": "profit_margin",
+            "value": 15.0,
+            "unit": "percentage", 
+            "trend": "stable"
+          }
+        ],
+        "data_quality_score": 0.95
+      }
+    ],
+    "comparative_analysis": {
+      "market_leader": "Restaurant A",
+      "total_market_size": 4300000,
+      "competitive_gap": "28.9%"
+    }
+  }
+}
+``` 

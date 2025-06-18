@@ -4,7 +4,7 @@ export const CONFIG = {
   SAMBANOVA: {
     BASE_URL: 'https://api.sambanova.ai/v1',
     MODELS: {
-      LLM: 'Mistral-7B-Instruct-v0.3',
+      LLM: 'Meta-Llama-3.3-70B-Instruct',
       EMBEDDING: 'text-embedding-ada-002'
     }
   },
