@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from 'dotenv';
 import { SupabaseRAGSystem } from './supabase-rag-system';
+import { MastraRAGSystem } from './mastra-rag-system';
 
 // Load environment variables
 config();
@@ -41,8 +42,9 @@ interface FileUpload {
   fields: any;
 }
 
-// Initialize RAG system
+// Initialize RAG systems
 let ragSystem: SupabaseRAGSystem | null = null;
+let mastraRagSystem: MastraRAGSystem | null = null;
 
 async function initializeRAGSystem() {
   if (!process.env.SAMBANOVA_API_KEY) {
@@ -72,6 +74,16 @@ async function initializeRAGSystem() {
 
   await ragSystem.initialize();
   console.log('✅ Supabase RAG System initialized');
+
+  // Initialize Mastra RAG system for enhanced query processing
+  mastraRagSystem = new MastraRAGSystem(
+    process.env.SAMBANOVA_API_KEY,
+    process.env.SUPABASE_DATABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
+  await mastraRagSystem.initialize();
+  console.log('✅ Mastra RAG System initialized with enhanced rate limiting');
 }
 
 // Build Fastify app
@@ -111,30 +123,46 @@ async function buildApp(): Promise<FastifyInstance> {
   fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
     return {
       success: true,
-      message: 'SambaNova RAG API with Supabase is running (Fastify)',
+      message: 'SambaNova RAG API with Mastra.ai + Supabase (Fastify)',
       timestamp: new Date().toISOString(),
-      system_initialized: ragSystem !== null,
+      systems: {
+        supabase_rag: ragSystem !== null,
+        mastra_rag: mastraRagSystem !== null
+      },
       storage: 'Supabase Storage + PostgreSQL',
-      framework: 'Fastify'
+      framework: 'Fastify + Mastra.ai',
+      query_system: 'Mastra.ai with Enhanced Rate Limiting'
     };
   });
 
   // Get system statistics
   fastify.get('/stats', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      if (!ragSystem) {
+      if (!ragSystem || !mastraRagSystem) {
         reply.code(500);
         return {
           success: false,
-          error: 'RAG system not initialized'
+          error: 'RAG systems not initialized'
         } as ApiResponse;
       }
 
-      const detailedStats = await ragSystem.getDetailedStats();
+      const [supabaseStats, mastraStats] = await Promise.all([
+        ragSystem.getDetailedStats(),
+        mastraRagSystem.getStats()
+      ]);
       
       return {
         success: true,
-        data: detailedStats
+        data: {
+          supabase_system: supabaseStats,
+          mastra_system: mastraStats,
+          active_query_system: 'Mastra.ai (Enhanced Rate Limiting)',
+          rate_limiting: {
+            delay_between_requests: '8 seconds',
+            max_requests_per_minute: 5,
+            features: ['Conservative Rate Limiting', 'Request Count Tracking', 'Auto Rate Reset']
+          }
+        }
       } as ApiResponse;
     } catch (error: any) {
       fastify.log.error('Error getting stats:', error);
@@ -469,7 +497,7 @@ async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Query the RAG system
+  // Query the RAG system using Mastra.ai workflow
   fastify.post<{ Body: QueryRequest }>('/query', {
     schema: {
       body: {
@@ -482,18 +510,18 @@ async function buildApp(): Promise<FastifyInstance> {
     }
   }, async (request: FastifyRequest<{ Body: QueryRequest }>, reply: FastifyReply) => {
     try {
-      if (!ragSystem) {
+      if (!mastraRagSystem) {
         reply.code(500);
         return {
           success: false,
-          error: 'RAG system not initialized'
+          error: 'Mastra RAG system not initialized'
         } as ApiResponse;
       }
 
       const { prompt } = request.body;
 
-      console.log(`🔍 API: Processing query: "${prompt}"`);
-      const result = await ragSystem.query(prompt.trim());
+      console.log(`🔍 API: Processing query with Mastra.ai: "${prompt}"`);
+      const result = await mastraRagSystem.query(prompt.trim());
 
       return {
         success: true,
@@ -503,18 +531,21 @@ async function buildApp(): Promise<FastifyInstance> {
           confidence: result.confidence,
           processingTime: result.processingTime,
           contextDocuments: result.context.length,
-          sources: result.context.map(doc => doc.metadata.source),
+          recommendations: result.recommendations || [],
+          sources: result.context.map(doc => doc.metadata?.source || doc.source || 'Unknown'),
           context: result.context.map(doc => ({
-            id: doc.id,
-            source: doc.metadata.source,
-            fileName: doc.metadata.source,
-            preview: doc.content.substring(0, 100) + '...'
-          }))
+            id: doc.id || doc.documentId || 'unknown',
+            source: doc.metadata?.source || doc.source || 'Unknown',
+            fileName: doc.metadata?.file_name || doc.filename || doc.metadata?.source || 'Unknown',
+            preview: (doc.content || doc.text || '').substring(0, 100) + '...'
+          })),
+          system: 'Mastra.ai + SambaNova + Supabase',
+          features: ['Enhanced Rate Limiting', 'Recommendation Engine', 'RAG Workflow']
         }
       } as ApiResponse;
 
     } catch (error: any) {
-      fastify.log.error('Error processing query:', error);
+      fastify.log.error('Error processing query with Mastra:', error);
       reply.code(500);
       return {
         success: false,
