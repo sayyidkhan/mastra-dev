@@ -1,0 +1,35 @@
+JSLW Bistro B,
+Balance Sheet,
+"As of December 31, 2024",
+,
+ASSETS,
+Current Assets:,
+Cash,"60,000"
+Accounts Receivable,"12,000"
+Inventory/WIP,"18,000"
+Prepaid Expenses,"6,000"
+Total Current Assets,"96,000"
+Non-Current Assets:,
+"Property, Plant & Equipment (Net)","180,000"
+Fixed Assets,"36,000"
+Total Non-Current Assets,"216,000"
+TOTAL ASSETS,"312,000"
+,
+LIABILITIES,
+Current Liabilities:,
+Accounts Payable,"24,000"
+Wages Payable,"12,000"
+Taxes Payable,"6,000"
+Unearned Revenue,"2,400"
+Bank Loans - Current,0
+Total Current Liabilities,"44,400"
+Non-Current Liabilities:,
+Long-Term Debt,"120,000"
+Bank Loans - Non Current,0
+Total Non-Current Liabilities,"120,000"
+TOTAL LIABILITIES,"164,400"
+,
+EQUITY,
+Owner's Equity / Share Capital,"25,000"
+Retained Earnings,"122,600"
+TOTAL EQUITY,"147,600"
