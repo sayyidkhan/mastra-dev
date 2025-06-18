@@ -2,6 +2,20 @@
 
 A high-performance RAG (Retrieval-Augmented Generation) API built with Mastra.ai workflows, Fastify and Supabase, powered by SambaNova's AI models.
 
+> 📚 **[→ Quick API Reference (API.md)](./API.md)** - For immediate usage and testing
+
+## ⚡ Quick Start
+
+```bash
+# 1. Upload your data
+curl -X POST https://your-url.com/upload -F "file=@data.csv"
+
+# 2. Ask questions about your data
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What insights can you provide from the data?"}'
+```
+
 ## 🚀 Features
 
 - **High Performance**: Built with Fastify (3x faster than Express)
