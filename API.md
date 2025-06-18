@@ -205,6 +205,15 @@ curl -X POST https://your-url.com/query \
     "prompt": "Give me an overview of all financial data",
     "useAllDocuments": true
   }'
+
+# With user response formatting
+curl -X POST https://your-url.com/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Which company has the highest revenue per employee?",
+    "documentNames": ["sample-financial-data"],
+    "user_response": "I need this information for a board presentation, please format it professionally with key metrics highlighted"
+  }'
 ```
 
 **Request Body:**
@@ -214,7 +223,8 @@ curl -X POST https://your-url.com/query \
   "documentIds": ["id1", "id2"],                    // Optional: specific documents
   "documentNames": ["restaurant-data"],             // Optional: by name (partial match)
   "tags": ["financial", "2024"],                    // Optional: by tags
-  "useAllDocuments": true                           // Optional: use all documents
+  "useAllDocuments": true,                          // Optional: use all documents
+  "user_response": "user feedback here"             // Optional: user response for formatting
 }
 ```
 
@@ -224,7 +234,8 @@ curl -X POST https://your-url.com/query \
   "success": true,
   "data": {
     "prompt": "What are the key financial insights?",
-    "response": "Based on the uploaded financial documents, here are the key insights: Restaurant A shows higher profitability with a 15% profit margin compared to Restaurant B's 12%. Revenue growth indicates...",
+    "user_response": "I need this for a board presentation, please format professionally",
+    "response": "**Executive Summary: Key Financial Insights**\n\n📊 **Performance Highlights:**\n- Restaurant A shows higher profitability with a 15% profit margin compared to Restaurant B's 12%\n- Revenue growth indicates strong market position...\n\n*Formatted for board presentation as requested*",
     "documentSelection": {
       "criteria": ["All documents"],
       "selectedCount": 4,
@@ -237,6 +248,7 @@ curl -X POST https://your-url.com/query \
       ]
     },
     "processingTime": "2.1s",
+    "responseFormatting": "Response formatted considering user feedback",
     "system": "Enhanced Mastra.ai + SambaNova + Supabase"
   }
 }
