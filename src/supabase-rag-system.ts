@@ -265,24 +265,41 @@ Please provide a helpful and accurate answer based only on the information provi
       // Extract text content from file
       let content = '';
       
+      // Get file extension for better type detection
+      const filename = file.originalname || '';
+      const extension = filename.toLowerCase().split('.').pop();
+      
       if (file.mimetype === 'text/plain' || file.mimetype === 'text/markdown') {
         content = file.buffer.toString('utf-8');
-      } else if (file.mimetype === 'text/csv' || file.mimetype === 'application/csv') {
-        // Parse CSV content into readable format
+      } else if (file.mimetype === 'text/csv' || file.mimetype === 'application/csv' || extension === 'csv') {
+        // Parse CSV content - include FULL content for RAG
         const csvContent = file.buffer.toString('utf-8');
         const lines = csvContent.split('\n').filter((line: string) => line.trim());
         const headers = lines[0]?.split(',') || [];
         
         content = `CSV Document: ${file.originalname}\n\n`;
-        content += `Headers: ${headers.join(', ')}\n\n`;
-        content += `Total Rows: ${lines.length - 1}\n\n`;
-        content += `Sample Data (first 1000 characters):\n${csvContent.substring(0, 1000)}`;
-        if (csvContent.length > 1000) content += '\n... (content truncated for processing)';
+        content += `This is a CSV file with the following structure:\n`;
+        content += `Headers: ${headers.join(', ')}\n`;
+        content += `Total Rows: ${lines.length - 1} data rows\n\n`;
+        content += `COMPLETE CSV DATA:\n${csvContent}\n\n`;
+        content += `This CSV contains financial data that can be analyzed for questions about companies, revenue, profit, employees, industries, etc.`;
       } else if (file.mimetype === 'application/pdf') {
         // For PDF parsing
         const pdfParse = require('pdf-parse');
         const pdfData = await pdfParse(file.buffer);
         content = pdfData.text;
+      } else if (extension === 'csv' || filename.toLowerCase().includes('csv')) {
+        // Fallback for CSV files that aren't detected properly
+        const csvContent = file.buffer.toString('utf-8');
+        const lines = csvContent.split('\n').filter((line: string) => line.trim());
+        const headers = lines[0]?.split(',') || [];
+        
+        content = `CSV Document: ${file.originalname}\n\n`;
+        content += `This is a CSV file with the following structure:\n`;
+        content += `Headers: ${headers.join(', ')}\n`;
+        content += `Total Rows: ${lines.length - 1} data rows\n\n`;
+        content += `COMPLETE CSV DATA:\n${csvContent}\n\n`;
+        content += `This CSV contains financial data that can be analyzed for questions about companies, revenue, profit, employees, industries, etc.`;
       } else {
         content = `Document: ${file.originalname}\nFile Type: ${file.mimetype}\nSize: ${file.size} bytes`;
       }
